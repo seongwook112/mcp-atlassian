@@ -477,6 +477,64 @@ class IssuesMixin(
 
         return metadata
 
+    def _is_adf_document(self, value):
+        """
+        description 값이 ADF(Atlassian Document Format) 문서인지 판별한다.
+        """
+        return (
+            isinstance(value, dict)
+            and value.get("type") == "doc"
+            and "version" in value
+            and "content" in value
+        )
+
+    def _create_issue_with_adf(self, fields: dict[str, Any]) -> dict:
+        """
+        description이 ADF 문서일 때 직접 Jira REST API를 호출하여 이슈를 생성한다.
+        """
+        import requests
+        import base64
+        user = getattr(self.config, 'username', None)
+        api_token = getattr(self.config, 'api_token', None)
+        if not user or not api_token:
+            raise Exception("Jira API 인증 정보(username, api_token)가 설정되어 있지 않습니다.")
+        basic_auth = base64.b64encode(f"{user}:{api_token}".encode()).decode()
+        url = f"{self.config.url}/rest/api/3/issue"
+        headers = {
+            "Authorization": f"Basic {basic_auth}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        resp = requests.post(url, headers=headers, json={"fields": fields})
+        if not resp.ok:
+            raise Exception(f"Jira API 이슈 생성 실패: {resp.status_code} {resp.text}")
+        data = resp.json()
+        if "key" not in data:
+            raise Exception(f"Jira API 응답에 key가 없습니다: {data}")
+        return data  # dict, 반드시 key 포함
+
+    def _update_issue_with_adf(self, issue_key: str, fields: dict[str, Any]) -> JiraIssue:
+        """
+        description이 ADF 문서일 때 직접 Jira REST API를 호출하여 이슈를 업데이트한다.
+        """
+        import requests
+        import base64
+        user = getattr(self.config, 'username', None)
+        api_token = getattr(self.config, 'api_token', None)
+        if not user or not api_token:
+            raise Exception("Jira API 인증 정보(username, api_token)가 설정되어 있지 않습니다.")
+        basic_auth = base64.b64encode(f"{user}:{api_token}".encode()).decode()
+        url = f"{self.config.url}/rest/api/3/issue/{issue_key}"
+        headers = {
+            "Authorization": f"Basic {basic_auth}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        response = requests.put(url, json={"fields": fields}, headers=headers)
+        response.raise_for_status()
+        issue_data = self.jira.get_issue(issue_key)
+        return JiraIssue.from_api_response(issue_data)
+
     def create_issue(
         self,
         project_key: str,
@@ -567,12 +625,11 @@ class IssuesMixin(
             # Process **kwargs using the dynamic field map
             self._process_additional_fields(fields, kwargs_copy)
 
-            # Create the issue
-            response = self.jira.create_issue(fields=fields)
-            if not isinstance(response, dict):
-                msg = f"Unexpected return value type from `jira.create_issue`: {type(response)}"
-                logger.error(msg)
-                raise TypeError(msg)
+            # description이 ADF 문서면 직접 API 호출
+            if "description" in fields and self._is_adf_document(fields["description"]):
+                response = self._create_issue_with_adf(fields)
+            else:
+                response = self.jira.create_issue(fields=fields)
 
             # Get the created issue key
             issue_key = response.get("key")
@@ -895,34 +952,49 @@ class IssuesMixin(
             update_fields = fields or {}
             attachments_result = None
 
+            # 디버깅: update_fields와 kwargs 출력
+            logger.debug(f"[update_issue] 초기 update_fields: {update_fields}")
+            logger.debug(f"[update_issue] kwargs: {kwargs}")
+            print(f"[update_issue] 초기 update_fields: {update_fields}")
+            print(f"[update_issue] kwargs: {kwargs}")
+
             # Process kwargs
             for key, value in kwargs.items():
                 if key == "status":
-                    # Status changes are handled separately via transitions
-                    # Add status to fields so _update_issue_with_status can find it
                     update_fields["status"] = value
                     return self._update_issue_with_status(issue_key, update_fields)
-
                 elif key == "attachments":
-                    # Handle attachments separately - they're not part of fields update
                     if value and isinstance(value, list | tuple):
-                        # We'll process attachments after updating fields
                         pass
                     else:
                         logger.warning(f"Invalid attachments value: {value}")
-
                 elif key == "assignee":
-                    # Handle assignee updates
                     try:
                         account_id = self._get_account_id(value)
                         self._add_assignee_to_fields(update_fields, account_id)
                     except ValueError as e:
                         logger.warning(f"Could not update assignee: {str(e)}")
                 else:
-                    # Process regular fields using _process_additional_fields
-                    # Create a temporary dict with just this field
                     field_kwargs = {key: value}
                     self._process_additional_fields(update_fields, field_kwargs)
+
+            # 디버깅: description 타입 및 내용 출력
+            if "description" in update_fields:
+                logger.debug(f"[update_issue] description type: {type(update_fields['description'])}")
+                logger.debug(f"[update_issue] description value: {update_fields['description']}")
+                print(f"[update_issue] description type: {type(update_fields['description'])}")
+                print(f"[update_issue] description value: {update_fields['description']}")
+
+            # description이 ADF 문서면 직접 API 호출
+            if "description" in update_fields and self._is_adf_document(update_fields["description"]):
+                logger.info(f"[update_issue] description이 ADF 문서이므로 직접 API 호출")
+                print(f"[update_issue] description이 ADF 문서이므로 직접 API 호출")
+                return self._update_issue_with_adf(issue_key, update_fields)
+
+            logger.info(f"[update_issue] description이 ADF 문서가 아니므로 기존 로직 사용")
+            print(f"[update_issue] description이 ADF 문서가 아니므로 기존 로직 사용")
+            logger.debug(f"[update_issue] update_fields 최종: {update_fields}")
+            print(f"[update_issue] update_fields 최종: {update_fields}")
 
             # Update the issue fields
             if update_fields:
@@ -943,7 +1015,6 @@ class IssuesMixin(
                     logger.error(
                         f"Error uploading attachments to {issue_key}: {str(e)}"
                     )
-                    # Continue with the update even if attachments fail
 
             # Get the updated issue data and convert to JiraIssue model
             issue_data = self.jira.get_issue(issue_key)
@@ -953,7 +1024,6 @@ class IssuesMixin(
                 raise TypeError(msg)
             issue = JiraIssue.from_api_response(issue_data)
 
-            # Add attachment results to the response if available
             if attachments_result:
                 issue.custom_fields["attachment_results"] = attachments_result
 
@@ -962,6 +1032,11 @@ class IssuesMixin(
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error updating issue {issue_key}: {error_msg}")
+            print(f"[update_issue] 예외 발생: {error_msg}")
+            print(f"[update_issue] update_fields: {update_fields}")
+            if "description" in update_fields:
+                print(f"[update_issue] description type: {type(update_fields['description'])}")
+                print(f"[update_issue] description value: {update_fields['description']}")
             raise ValueError(f"Failed to update issue {issue_key}: {error_msg}") from e
 
     def _update_issue_with_status(
