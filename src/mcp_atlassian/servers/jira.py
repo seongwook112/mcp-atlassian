@@ -1383,3 +1383,160 @@ async def update_sprint(
         return json.dumps(error_payload, indent=2, ensure_ascii=False)
     else:
         return json.dumps(sprint.to_simplified_dict(), indent=2, ensure_ascii=False)
+
+
+@convert_empty_defaults_to_none
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_project(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="The project key (e.g., 'GRW')")],
+) -> str:
+    """Get project information including project ID.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string representing the project object.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not project_key:
+        raise ValueError("project_key is required")
+
+    try:
+        # 기존 ProjectsMixin의 get_project 함수 활용
+        project = jira.get_project(project_key)
+        if project is None:
+            error_payload = {"error": f"Project {project_key} not found"}
+            return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+        return json.dumps(project, indent=2, ensure_ascii=False)
+    except Exception as e:
+        error_payload = {"error": f"Failed to get project {project_key}: {str(e)}"}
+        return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_project_issue_types(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="The project key (e.g., 'GRW')")],
+) -> str:
+    """Get issue types available for project creation.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string representing the list of issue types available for the project.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not project_key:
+        raise ValueError("project_key is required")
+
+    try:
+        # 기존 ProjectsMixin의 get_project_issue_types 함수 활용
+        issue_types = jira.get_project_issue_types(project_key)
+        return json.dumps(issue_types, indent=2, ensure_ascii=False)
+    except Exception as e:
+        error_payload = {
+            "error": f"Failed to get issue types for project {project_key}: {str(e)}"
+        }
+        return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_project_createmeta(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="The project key (e.g., 'GRW')")],
+    expand: Annotated[
+        str,
+        Field(
+            description="Fields to expand (default: 'projects.issuetypes.fields')",
+            default="projects.issuetypes.fields",
+        ),
+    ] = "projects.issuetypes.fields",
+) -> str:
+    """Get complete create metadata for project including issue type fields.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        expand: Fields to expand.
+
+    Returns:
+        JSON string representing the complete metadata for project creation.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not project_key:
+        raise ValueError("project_key is required")
+
+    try:
+        # 1. 프로젝트 존재 여부 확인
+        project = jira.get_project(project_key)
+        if project is None:
+            error_payload = {"error": f"Project {project_key} not found"}
+            return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+        # 2. issue_createmeta(project_key, expand) 호출 - project_key를 직접 넘김
+        createmeta = jira.jira.issue_createmeta(project=project_key, expand=expand)
+
+        return json.dumps(createmeta, indent=2, ensure_ascii=False)
+    except Exception as e:
+        error_payload = {
+            "error": f"Failed to get create metadata for project {project_key}: {str(e)}"
+        }
+        return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_issue_type_fields(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="The project key (e.g., 'GRW')")],
+    issue_type_id: Annotated[str, Field(description="The issue type ID")],
+) -> str:
+    """Get fields available for specific project and issue type.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+        issue_type_id: The issue type ID.
+
+    Returns:
+        JSON string representing the fields available for the specific project and issue type.
+
+    Raises:
+        ValueError: If the Jira client is not configured or available.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not project_key or not issue_type_id:
+        raise ValueError("project_key and issue_type_id are required")
+
+    try:
+        # 1. 프로젝트 존재 여부 확인
+        project = jira.get_project(project_key)
+        if project is None:
+            error_payload = {"error": f"Project {project_key} not found"}
+            return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+        # 2. issue_createmeta_fieldtypes(project_key, issue_type_id) 호출 - project_key를 직접 넘김
+        fields = jira.jira.issue_createmeta_fieldtypes(
+            project=project_key, issue_type_id=issue_type_id
+        )
+
+        return json.dumps(fields, indent=2, ensure_ascii=False)
+    except Exception as e:
+        error_payload = {
+            "error": f"Failed to get fields for project {project_key} and issue type {issue_type_id}: {str(e)}"
+        }
+        return json.dumps(error_payload, indent=2, ensure_ascii=False)
