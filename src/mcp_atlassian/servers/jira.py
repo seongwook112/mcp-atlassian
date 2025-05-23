@@ -1443,13 +1443,45 @@ async def get_project_issue_types(
 
     try:
         # 기존 ProjectsMixin의 get_project_issue_types 함수 활용
-        issue_types = jira.get_project_issue_types(project_key)
-        return json.dumps(issue_types, indent=2, ensure_ascii=False)
+        issue_types_data = jira.get_project_issue_types(project_key)
+
+        # id, description, name 필드만 추출
+        filtered_issue_types = []
+        if isinstance(issue_types_data, list):
+            for issue_type in issue_types_data:
+                if isinstance(issue_type, dict):
+                    filtered_issue_types.append(
+                        {
+                            "id": issue_type.get("id"),
+                            "description": issue_type.get("description"),
+                            "name": issue_type.get("name"),
+                        }
+                    )
+
+        return json.dumps(filtered_issue_types, indent=2, ensure_ascii=False)
     except Exception as e:
         error_payload = {
             "error": f"Failed to get issue types for project {project_key}: {str(e)}"
         }
         return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+
+def _remove_fix_versions_from_fields(data):
+    """Helper function to recursively remove fixVersions fields from API response data."""
+    if isinstance(data, dict):
+        # Remove fixVersions field if it exists
+        if "fixVersions" in data:
+            del data["fixVersions"]
+
+        # Recursively process nested dictionaries
+        for value in data.values():
+            _remove_fix_versions_from_fields(value)
+    elif isinstance(data, list):
+        # Recursively process list items
+        for item in data:
+            _remove_fix_versions_from_fields(item)
+
+    return data
 
 
 @jira_mcp.tool(tags={"jira", "read"})
@@ -1482,16 +1514,13 @@ async def get_project_createmeta(
         raise ValueError("project_key is required")
 
     try:
-        # 1. 프로젝트 존재 여부 확인
-        project = jira.get_project(project_key)
-        if project is None:
-            error_payload = {"error": f"Project {project_key} not found"}
-            return json.dumps(error_payload, indent=2, ensure_ascii=False)
-
-        # 2. issue_createmeta(project_key, expand) 호출 - project_key를 직접 넘김
+        # issue_createmeta(project_key, expand) 호출 - project_key를 직접 넘김
         createmeta = jira.jira.issue_createmeta(project=project_key, expand=expand)
 
-        return json.dumps(createmeta, indent=2, ensure_ascii=False)
+        # fixVersions 필드 제거
+        filtered_data = _remove_fix_versions_from_fields(createmeta)
+
+        return json.dumps(filtered_data, indent=2, ensure_ascii=False)
     except Exception as e:
         error_payload = {
             "error": f"Failed to get create metadata for project {project_key}: {str(e)}"
@@ -1523,18 +1552,30 @@ async def get_issue_type_fields(
         raise ValueError("project_key and issue_type_id are required")
 
     try:
-        # 1. 프로젝트 존재 여부 확인
-        project = jira.get_project(project_key)
-        if project is None:
-            error_payload = {"error": f"Project {project_key} not found"}
-            return json.dumps(error_payload, indent=2, ensure_ascii=False)
-
-        # 2. issue_createmeta_fieldtypes(project_key, issue_type_id) 호출 - project_key를 직접 넘김
-        fields = jira.jira.issue_createmeta_fieldtypes(
+        # issue_createmeta_fieldtypes(project_key, issue_type_id) 호출
+        response_data = jira.jira.issue_createmeta_fieldtypes(
             project=project_key, issue_type_id=issue_type_id
         )
 
-        return json.dumps(fields, indent=2, ensure_ascii=False)
+        # 응답 구조 확인 및 fixVersions 필터링
+        if isinstance(response_data, dict) and "fields" in response_data:
+            # 응답이 {"startAt": ..., "fields": [...]} 형태인 경우
+            fields_list = response_data["fields"]
+            filtered_fields = [
+                field
+                for field in fields_list
+                if not (isinstance(field, dict) and field.get("key") == "fixVersions")
+            ]
+            # 원본 응답 구조를 유지하되 fields만 필터링
+            response_data["fields"] = filtered_fields
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
+        else:
+            # 예상치 못한 응답 구조인 경우
+            logger.warning(
+                f"Unexpected data structure from jira.issue_createmeta_fieldtypes: {type(response_data)}"
+            )
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
+
     except Exception as e:
         error_payload = {
             "error": f"Failed to get fields for project {project_key} and issue type {issue_type_id}: {str(e)}"
