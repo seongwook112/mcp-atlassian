@@ -1581,3 +1581,70 @@ async def get_issue_type_fields(
             "error": f"Failed to get fields for project {project_key} and issue type {issue_type_id}: {str(e)}"
         }
         return json.dumps(error_payload, indent=2, ensure_ascii=False)
+
+
+@jira_mcp.tool(tags={"jira", "read"})
+async def get_all_project_members(
+    ctx: Context,
+    project_key: Annotated[str, Field(description="The project key (e.g., 'GRW')")],
+) -> str:
+    """
+    Get all unique members (displayName and accountId) of a Jira project by aggregating members from all project roles.
+
+    Args:
+        ctx: The FastMCP context.
+        project_key: The project key.
+
+    Returns:
+        JSON string representing a list of unique member objects, each containing 'displayName' and 'accountId'.
+        Returns an error object if the project is not found or an error occurs.
+    """
+    jira = await get_jira_fetcher(ctx)
+    if not project_key:
+        raise ValueError("project_key is required")
+
+    all_members_map: dict[str, dict[str, str]] = (
+        {}
+    )  # Use accountId as key to ensure uniqueness
+
+    try:
+        project_roles = jira.get_project_roles(project_key)
+        if not project_roles:
+            return json.dumps([], indent=2, ensure_ascii=False)
+
+        for role_name, role_url in project_roles.items():
+            try:
+                # Extract role_id from the role_url (e.g., "https://.../rest/api/2/project/KEY/role/10000")
+                role_id = role_url.split("/")[-1]
+                if not role_id.isdigit():
+                    continue
+
+                role_members = jira.get_project_role_members(project_key, role_id)
+                for member in role_members:
+                    actor_type = member.get("type")
+                    display_name = member.get("displayName")
+                    account_id = None
+                    if actor_type == "atlassian-user-role-actor":
+                        actor_user = member.get("actorUser")
+                        if actor_user:
+                            account_id = actor_user.get("accountId")
+                    if account_id and display_name:
+                        if account_id not in all_members_map:
+                            all_members_map[account_id] = {
+                                "displayName": display_name,
+                                "accountId": account_id,
+                            }
+            except Exception as e_inner:
+                # Continue to next role if one fails
+                pass
+
+        unique_members_list = list(all_members_map.values())
+        return json.dumps(unique_members_list, indent=2, ensure_ascii=False)
+
+    except Exception as e:
+        error_payload = {
+            "success": False,
+            "error": f"Failed to get all members for project {project_key}: {str(e)}",
+            "project_key": project_key,
+        }
+        return json.dumps(error_payload, indent=2, ensure_ascii=False)

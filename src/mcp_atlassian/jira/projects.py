@@ -171,6 +171,8 @@ class ProjectsMixin(JiraClient, SearchOperationsProto):
             actors = []
             if isinstance(members, dict) and "actors" in members:
                 actors = members.get("actors", [])
+            elif isinstance(members, list):
+                actors = members
             return actors
 
         except Exception as e:
