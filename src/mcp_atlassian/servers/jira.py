@@ -647,7 +647,7 @@ async def create_issue(
         ),
     ] = "",
     description: Annotated[
-        str, Field(description="Issue description", default="")
+        Any, Field(description="Issue description (string or ADF document)", default="")
     ] = "",
     components: Annotated[
         str,
