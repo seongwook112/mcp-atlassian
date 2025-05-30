@@ -689,6 +689,14 @@ async def create_issue(
     Raises:
         ValueError: If in read-only mode or Jira client is unavailable.
     """
+    # description 처리: dict 또는 JSON string을 모두 지원
+    processed_description = description
+    if isinstance(description, str) and description.strip().startswith("{"):
+        try:
+            processed_description = json.loads(description)
+        except json.JSONDecodeError:
+            processed_description = description
+
     jira = await get_jira_fetcher(ctx)
     # Parse components from comma-separated string to list
     components_list = None
@@ -706,7 +714,7 @@ async def create_issue(
         project_key=project_key,
         summary=summary,
         issue_type=issue_type,
-        description=description,
+        description=processed_description,
         assignee=assignee,
         components=components_list,
         **extra_fields,
