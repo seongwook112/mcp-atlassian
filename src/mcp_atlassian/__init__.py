@@ -11,7 +11,7 @@ from mcp_atlassian.utils.logging import setup_logging
 __version__ = "0.11.1"
 
 # Initialize logging with appropriate level
-logging_level = logging.WARNING
+logging_level = logging.INFO
 if os.getenv("MCP_VERBOSE", "").lower() in ("true", "1", "yes"):
     logging_level = logging.DEBUG
 

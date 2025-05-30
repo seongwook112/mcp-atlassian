@@ -8,12 +8,12 @@ output stream based on their level.
 import logging
 
 
-def setup_logging(level: int = logging.WARNING) -> logging.Logger:
+def setup_logging(level: int = logging.INFO) -> logging.Logger:
     """
     Configure MCP-Atlassian logging with level-based stream routing.
 
     Args:
-        level: The minimum logging level to display (default: WARNING)
+        level: The minimum logging level to display (default: INFO)
 
     Returns:
         The configured logger instance
